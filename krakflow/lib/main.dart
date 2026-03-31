@@ -1,21 +1,8 @@
 import 'package:flutter/material.dart';
+import 'task_repository.dart';
 
 void main() {
   runApp(const MyApp());
-}
-
-class Task {
-  final String title;
-  final String deadline;
-  final bool done;
-  final String priority;
-
-  Task({
-    required this.title,
-    required this.deadline,
-    required this.done,
-    required this.priority,
-  });
 }
 
 class MyApp extends StatelessWidget {
@@ -23,69 +10,76 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    List<Task> tasks = [
-      Task(
-        title: "Przygotować prezentację",
-        deadline: "jutro",
-        priority: "wysoki",
-        done: false,
-      ),
-      Task(
-        title: "Oddać raport z laboratoriów",
-        deadline: "dzisiaj",
-        priority: "wysoki",
-        done: true,
-      ),
-      Task(
-        title: "Powtórzyć widgety Flutter",
-        deadline: "w piątek",
-        priority: "średni",
-        done: false,
-      ),
-      Task(
-        title: "Napisać notatki do kolokwium",
-        deadline: "w weekend",
-        priority: "niski",
-        done: false,
-      ),
-    ];
+    return const MaterialApp(
+      home: HomeScreen(),
+    );
+  }
+}
 
-    int completedTasks = tasks.where((task) => task.done).length;
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
 
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text("KrakFlow"),
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  Widget build(BuildContext context) {
+    int completedTasks = TaskRepository.tasks.where((task) => task.done).length;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("KrakFlow"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("KrakFlow"),
+            const Text("Organizacja studiów"),
+            const Text("Dzisiejsze zadania"),
+            Text(
+              "Masz dziś ${TaskRepository.tasks.length} zadania (wykonano: $completedTasks)",
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              "Dzisiejsze zadania",
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.builder(
+                itemCount: TaskRepository.tasks.length,
+                itemBuilder: (context, index) {
+                  return TaskCard(task: TaskRepository.tasks[index]);
+                },
+              ),
+            ),
+          ],
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                "Masz dziś ${tasks.length} zadania (wykonano: $completedTasks)",
-                style: const TextStyle(fontSize: 16),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                "Dzisiejsze zadania",
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: tasks.length,
-                  itemBuilder: (context, index) {
-                    return TaskCard(task: tasks[index]);
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final Task? newTask = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => AddTaskScreen(),
+            ),
+          );
+
+          if (newTask != null) {
+            setState(() {
+              TaskRepository.tasks.add(newTask);
+            });
+          }
+        },
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -108,6 +102,69 @@ class TaskCard extends StatelessWidget {
         ),
         title: Text(task.title),
         subtitle: Text("termin: ${task.deadline} | priorytet: ${task.priority}"),
+      ),
+    );
+  }
+}
+
+class AddTaskScreen extends StatelessWidget {
+  AddTaskScreen({super.key});
+
+  final TextEditingController titleController = TextEditingController();
+  final TextEditingController deadlineController = TextEditingController();
+  final TextEditingController priorityController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Nowe zadanie"),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(
+                labelText: "Tytuł zadania",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: deadlineController,
+              decoration: const InputDecoration(
+                labelText: "Termin",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: priorityController,
+              decoration: const InputDecoration(
+                labelText: "Priorytet",
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 32),
+            Center(
+              child: ElevatedButton(
+                onPressed: () {
+                  final newTask = Task(
+                    title: titleController.text,
+                    deadline: deadlineController.text,
+                    priority: priorityController.text,
+                    done: false,
+                  );
+                  Navigator.pop(context, newTask);
+                },
+                child: const Text("Zapisz"),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
