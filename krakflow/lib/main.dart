@@ -1,59 +1,13 @@
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'dart:math';
+import 'package:hive_ce_flutter/hive_flutter.dart';
+import 'models/task.dart';
+import 'services/task_local_database.dart';
+import 'services/task_sync_service.dart';
 
-
-class Task {
-  String title;
-  String deadline;
-  String priority;
-  bool done;
-
-  Task({
-    required this.title,
-    required this.deadline,
-    required this.priority,
-    this.done = false,
-  });
-}
-
-class TaskRepository {
-  static List<Task> tasks = [];
-}
-
-class TaskApiService {
-  static const String baseUrl = "https://dummyjson.com";
-
-  static Future<List<Task>> fetchTasks() async {
-    final response = await http.get(Uri.parse("$baseUrl/todos"));
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final List todos = data["todos"];
-
-      final random = Random();
-      final priorities = ["niski", "średni", "wysoki"];
-      final deadlines = ["dzisiaj", "jutro", "za tydzień", "w piątek"];
-
-      return todos.map((todo) {
-        final priority = priorities[random.nextInt(priorities.length)];
-        final deadline = deadlines[random.nextInt(deadlines.length)];
-
-        return Task(
-          title: todo["todo"],
-          deadline: deadline,
-          priority: priority,
-          done: todo["completed"],
-        );
-      }).toList();
-    } else {
-      throw Exception("Błąd pobierania danych z serwera");
-    }
-  }
-}
-
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await Hive.openBox("tasks");
   runApp(const MyApp());
 }
 
@@ -83,14 +37,18 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _futureTasks = _loadInitialTasks();
+    _futureTasks = loadTasks();
   }
 
-  Future<List<Task>> _loadInitialTasks() async {
-    if (TaskRepository.tasks.isEmpty) {
-      TaskRepository.tasks = await TaskApiService.fetchTasks();
-    }
-    return TaskRepository.tasks;
+  Future<List<Task>> loadTasks() async {
+    await TaskSyncService.loadInitialDataIfNeeded();
+    return TaskLocalDatabase.getTasks();
+  }
+
+  void _refreshTasks() {
+    setState(() {
+      _futureTasks = loadTasks();
+    });
   }
 
   @override
@@ -114,12 +72,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: const Text("Anuluj"),
                       ),
                       TextButton(
-                        onPressed: () {
-                          setState(() {
-                            TaskRepository.tasks.clear();
-                          });
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
+                        onPressed: () async {
+                          await TaskLocalDatabase.deleteAllTasks();
+                          _refreshTasks();
+                          if(context.mounted) Navigator.pop(context);
+                          if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text("Wszystkie zadania usunięte")),
                           );
                         },
@@ -138,18 +95,17 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
-          }
-          else if (snapshot.hasError) {
+          } else if (snapshot.hasError) {
             return Center(child: Text("Błąd: ${snapshot.error}"));
-          }
-          else if (snapshot.hasData) {
-            int completedTasks = TaskRepository.tasks.where((task) => task.done).length;
+          } else if (snapshot.hasData) {
+            final tasks = snapshot.data ?? [];
+            int completedTasks = tasks.where((task) => task.done).length;
 
-            List<Task> filteredTasks = TaskRepository.tasks;
+            List<Task> filteredTasks = tasks;
             if (selectedFilter == "wykonane") {
-              filteredTasks = TaskRepository.tasks.where((task) => task.done).toList();
+              filteredTasks = tasks.where((task) => task.done).toList();
             } else if (selectedFilter == "do zrobienia") {
-              filteredTasks = TaskRepository.tasks.where((task) => !task.done).toList();
+              filteredTasks = tasks.where((task) => !task.done).toList();
             }
 
             return Padding(
@@ -161,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Text("Organizacja studiów"),
                   const Text("Dzisiejsze zadania"),
                   Text(
-                    "Masz dziś ${TaskRepository.tasks.length} zadania (wykonano: $completedTasks)",
+                    "Masz dziś ${tasks.length} zadania (wykonano: $completedTasks)",
                     style: const TextStyle(fontSize: 16),
                   ),
                   const SizedBox(height: 16),
@@ -223,21 +179,26 @@ class _HomeScreenState extends State<HomeScreen> {
                       itemBuilder: (context, index) {
                         final task = filteredTasks[index];
                         return Dismissible(
-                          key: ValueKey(task.title + index.toString()),
-                          onDismissed: (direction) {
-                            setState(() {
-                              TaskRepository.tasks.remove(task);
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
+                          key: ValueKey(task.id.toString()),
+                          onDismissed: (direction) async {
+                            await TaskLocalDatabase.deleteTask(task.id);
+                            _refreshTasks();
+                            if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text("Zadanie usunięte")),
                             );
                           },
                           child: TaskCard(
                             task: task,
-                            onChanged: (value) {
-                              setState(() {
-                                task.done = value ?? false;
-                              });
+                            onChanged: (value) async {
+                              final updatedTask = Task(
+                                id: task.id,
+                                title: task.title,
+                                deadline: task.deadline,
+                                priority: task.priority,
+                                done: value ?? false,
+                              );
+                              await TaskLocalDatabase.updateTask(updatedTask);
+                              _refreshTasks();
                             },
                             onTap: () async {
                               final updatedTask = await Navigator.push<Task>(
@@ -248,12 +209,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               );
 
                               if (updatedTask != null) {
-                                setState(() {
-                                  final taskIndex = TaskRepository.tasks.indexOf(task);
-                                  if (taskIndex != -1) {
-                                    TaskRepository.tasks[taskIndex] = updatedTask;
-                                  }
-                                });
+                                await TaskLocalDatabase.updateTask(updatedTask);
+                                _refreshTasks();
                               }
                             },
                           ),
@@ -278,9 +235,8 @@ class _HomeScreenState extends State<HomeScreen> {
           );
 
           if (newTask != null) {
-            setState(() {
-              TaskRepository.tasks.add(newTask);
-            });
+            await TaskLocalDatabase.addTask(newTask);
+            _refreshTasks();
           }
         },
         child: const Icon(Icons.add),
@@ -370,6 +326,7 @@ class AddTaskScreen extends StatelessWidget {
               child: ElevatedButton(
                 onPressed: () {
                   final newTask = Task(
+                    id: DateTime.now().millisecondsSinceEpoch,
                     title: titleController.text,
                     deadline: deadlineController.text,
                     priority: priorityController.text,
@@ -456,6 +413,7 @@ class _EditTaskScreenState extends State<EditTaskScreen> {
               child: ElevatedButton(
                 onPressed: () {
                   final updatedTask = Task(
+                    id: widget.task.id,
                     title: titleController.text,
                     deadline: deadlineController.text,
                     priority: priorityController.text,
